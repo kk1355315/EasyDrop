@@ -129,7 +129,7 @@ Authorization: Bearer <PULL_TOKEN>
 python -m venv .venv
 . .venv/bin/activate
 pip install -r requirements.txt -r requirements-dev.txt
-pytest
+python -m pytest
 ```
 
 Windows PowerShell 激活命令为 `.\.venv\Scripts\Activate.ps1`。
