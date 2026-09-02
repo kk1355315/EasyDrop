@@ -1,0 +1,12 @@
+.env
+data
+.git
+.github
+.server-snapshot
+__pycache__
+*.pyc
+.pytest_cache
+tests
+*.pem
+*.key
+*.crt

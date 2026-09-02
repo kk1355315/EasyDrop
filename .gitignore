@@ -1,0 +1,12 @@
+.env*
+!.env.example
+data/
+__pycache__/
+.pytest_cache/
+.venv/
+.server-snapshot/
+*.pem
+*.key
+*.crt
+tests/*cookie*
+tests/downloaded*

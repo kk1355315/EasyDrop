@@ -1,0 +1,26 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+  <meta name="theme-color" content="#2457e6">
+  <link rel="manifest" href="manifest.webmanifest">
+  <link rel="icon" href="static/icon-192.png">
+  <link rel="stylesheet" href="static/style.css">
+  <title>发到 iPad</title>
+</head>
+<body>
+  <main class="card narrow">
+    <img class="logo" src="static/icon-192.png" alt="">
+    <h1>发到 iPad</h1>
+    <p class="muted">登录一次后，就能从 vivo 分享菜单直接上传。</p>
+    <form method="post" action="login">
+      <label for="password">访问密码</label>
+      <input id="password" name="password" type="password" required autocomplete="current-password">
+      <button type="submit">登录</button>
+      <p id="error" class="error" hidden>密码不正确</p>
+    </form>
+  </main>
+  <script>if(new URLSearchParams(location.search).has('error'))document.querySelector('#error').hidden=false;</script>
+</body>
+</html>

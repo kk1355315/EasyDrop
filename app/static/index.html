@@ -1,0 +1,27 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+  <meta name="theme-color" content="#2457e6">
+  <link rel="manifest" href="manifest.webmanifest">
+  <link rel="icon" href="static/icon-192.png">
+  <link rel="stylesheet" href="static/style.css">
+  <title>发到 iPad</title>
+</head>
+<body>
+  <main class="card">
+    <header><div><h1>发到 iPad</h1><p class="muted">照片、视频和文件都可以</p></div><img class="logo small" src="static/icon-192.png" alt=""></header>
+    <form id="upload-form" enctype="multipart/form-data">
+      <label class="drop-zone" for="files"><span class="plus">＋</span><strong>选择文件</strong><span>也可以从系统分享菜单发送</span></label>
+      <input id="files" name="files" type="file" multiple required hidden>
+      <div id="selection" class="selection" hidden></div>
+      <button id="send" type="submit" disabled>上传</button>
+    </form>
+    <div id="status" class="status" role="status"></div>
+    <details><summary>安装到分享菜单</summary><p>用 Chrome 打开本页，选择“添加到主屏幕”或“安装应用”。安装完成后，“发到 iPad”会出现在系统分享菜单。</p></details>
+    <form method="post" action="logout"><button class="link-button" type="submit">退出登录</button></form>
+  </main>
+  <script src="static/app.js"></script>
+</body>
+</html>
