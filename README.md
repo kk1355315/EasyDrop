@@ -1,4 +1,4 @@
-# Android to iPad Drop
+# EasyDrop
 
 一个轻量、自托管的文件投递服务。
 
