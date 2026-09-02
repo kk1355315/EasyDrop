@@ -95,7 +95,7 @@ if [[ -z "${SMTP_PASSWORD}" ]]; then
   exit 1
 fi
 SMTP_FROM="$(prompt_default '发件人邮箱' "${SMTP_USER}")"
-TRIGGER_TO="$(prompt_required '【必须】iPad 接收触发邮件的邮箱')"
+TRIGGER_TO="$(prompt_required '【必须】已登录 iPad“邮件”App 的 iCloud 邮箱')"
 TRIGGER_SUBJECT="$(prompt_default '触发邮件主题' 'DROP_READY')"
 RETENTION_HOURS="$(prompt_default '未接收文件保留小时数' '48')"
 if [[ ! "${RETENTION_HOURS}" =~ ^[0-9]+$ || "${RETENTION_HOURS}" -lt 1 ]]; then
