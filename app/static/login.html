@@ -20,7 +20,10 @@
       <button type="submit">登录</button>
       <p id="error" class="error" hidden>密码不正确</p>
     </form>
+    <button id="install" type="button" hidden>安装到手机分享菜单</button>
+    <p id="install-hint" class="muted">请用 Android Chrome 打开，登录后即可分享文件。</p>
   </main>
+  <script src="static/install.js"></script>
   <script>if(new URLSearchParams(location.search).has('error'))document.querySelector('#error').hidden=false;</script>
 </body>
 </html>

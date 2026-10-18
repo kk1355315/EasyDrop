@@ -1,17 +1,23 @@
-const CACHE = 'easydrop-v2';
 const BASE = new URL(self.registration.scope).pathname.replace(/\/$/, '');
+const SHARED = BASE.endsWith('-pc') ? BASE.slice(0, -3) : BASE;
+const CACHE = `easydrop-v3:${BASE}`;
 const ASSETS = [
   `${BASE}/`,
-  `${BASE}/static/style.css`,
-  `${BASE}/static/targets.css`,
-  `${BASE}/static/app.js`,
-  `${BASE}/static/icon-192.png`,
-  `${BASE}/static/icon-512.png`
+  `${SHARED}/static/style.css`,
+  `${SHARED}/static/targets.css`,
+  `${SHARED}/static/app.js`,
+  `${SHARED}/static/install.js`,
+  `${SHARED}/static/icon-192.png`,
+  `${SHARED}/static/icon-512.png`
 ];
-self.addEventListener('install', event => event.waitUntil(caches.open(CACHE).then(cache => cache.addAll(ASSETS))));
+self.addEventListener('install', event => event.waitUntil((async () => {
+  const cache = await caches.open(CACHE);
+  await cache.addAll(ASSETS);
+  await self.skipWaiting();
+})()));
 self.addEventListener('activate', event => event.waitUntil((async () => {
   for (const name of await caches.keys()) {
-    if (name === 'ipad-drop-v1') await caches.delete(name);
+    if (name === 'ipad-drop-v1' || name === 'easydrop-v2') await caches.delete(name);
   }
   await self.clients.claim();
 })()));

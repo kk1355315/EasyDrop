@@ -21,10 +21,13 @@
       <button id="send" type="submit" disabled>上传</button>
     </form>
     <div id="status" class="status" role="status"></div>
+    <button id="install" type="button" hidden>安装到手机分享菜单</button>
+    <p id="install-hint" class="muted">请用 Android Chrome 打开，在浏览器菜单中选择“安装应用”。</p>
     <details><summary>安装到分享菜单</summary><p>用 Chrome 打开本页，选择“添加到主屏幕”或“安装应用”。安装完成后，“发到 iPad”会出现在系统分享菜单。</p></details>
     <p><a href="pc/">安装“发到电脑”分享入口</a></p>
     <form method="post" action="logout"><button class="link-button" type="submit">退出登录</button></form>
   </main>
   <script src="static/app.js"></script>
+  <script src="static/install.js"></script>
 </body>
 </html>

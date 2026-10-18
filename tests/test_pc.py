@@ -52,13 +52,13 @@ def test_targets_are_separate_and_ipad_api_stays_compatible(pc_client):
 
 def test_pc_share_manifest_login_and_no_email(pc_client):
     client, notifications = pc_client
-    manifest = client.get("/drop/pc/manifest.webmanifest").json()
+    manifest = client.get("/drop-pc/manifest.webmanifest").json()
     assert manifest["name"] == "发到电脑"
-    assert manifest["id"] == manifest["scope"] == manifest["start_url"] == "/drop/pc/"
-    assert manifest["share_target"]["action"] == "/drop/pc/share"
-    page = client.get("/drop/pc/").text
-    assert '<base href="/drop/">' in page
-    assert 'href="pc/manifest.webmanifest"' in page
+    assert manifest["id"] == manifest["scope"] == manifest["start_url"] == "/drop-pc/"
+    assert manifest["share_target"]["action"] == "/drop-pc/share"
+    page = client.get("/drop-pc/").text
+    assert '<base href="/drop-pc/">' in page
+    assert 'href="manifest.webmanifest"' in page
     assert 'data-target="pc"' in page
     response = client.post("/drop/pc/share", files={"files": ("photo.jpg", b"photo")})
     assert response.status_code == 200
@@ -67,9 +67,42 @@ def test_pc_share_manifest_login_and_no_email(pc_client):
     assert len(client.get("/drop/api/pc/pending", headers=PC).json()) == 1
     client.cookies.clear()
     assert client.post("/drop/pc/share", files={"files": ("bad.txt", b"bad")}).status_code == 401
-    assert 'action="pc/login"' in client.get("/drop/pc/").text
+    assert 'action="login"' in client.get("/drop-pc/").text
     response = client.post("/drop/pc/login", data={"password": "test-password"}, follow_redirects=False)
-    assert response.headers["location"] == "/drop/pc/"
+    assert response.headers["location"] == "/drop-pc/"
+
+
+def test_install_scopes_do_not_overlap_and_login_registers_workers(pc_client):
+    client, _ = pc_client
+    ipad = client.get("/drop/manifest.webmanifest").json()
+    pc = client.get("/drop-pc/manifest.webmanifest").json()
+    assert not pc["scope"].startswith(ipad["scope"])
+    assert not ipad["scope"].startswith(pc["scope"])
+    assert ipad["id"] == ipad["start_url"] == "/drop/"
+    assert ipad["share_target"]["action"] == "/drop/share"
+    assert client.get("/drop/pc/", follow_redirects=False).headers["location"] == "/drop-pc/"
+    client.cookies.clear()
+    for prefix in ("/drop", "/drop-pc"):
+        page = client.get(prefix + "/").text
+        assert 'src="/drop/static/install.js"' in page
+        assert client.get(prefix + "/sw.js").headers["service-worker-allowed"] == prefix + "/"
+        assert client.head(prefix + "/manifest.webmanifest").status_code == 200
+    response = client.post("/drop-pc/login", data={"password": "test-password"}, follow_redirects=False)
+    assert response.headers["location"] == "/drop-pc/"
+    assert 'id="upload-form"' in client.get("/drop/").text
+    assert 'id="upload-form"' in client.get("/drop-pc/").text
+
+
+def test_shares_accept_text_urls_and_legacy_file_field_names(pc_client):
+    client, notifications = pc_client
+    assert client.post("/drop/share", data={"text": "https://example.test/hello"}).status_code == 200
+    item = client.get("/drop/api/pending", headers=IPAD).json()[0]
+    assert client.get(item["download_url"], headers=IPAD).content == b"https://example.test/hello"
+    assert client.post("/drop/share", files={"file": ("old.jpg", b"photo", "image/jpeg")}).status_code == 200
+    assert client.post("/drop-pc/share", files={"files": ("pc.jpg", b"photo", "image/jpeg")}).status_code == 200
+    assert len(notifications) == 2
+    assert client.post("/drop/share", data={"text": ""}).status_code == 400
+    assert client.get("/drop/share", follow_redirects=False).status_code == 303
 
 
 def test_existing_ipad_shortcut_query_token_still_works(pc_client):

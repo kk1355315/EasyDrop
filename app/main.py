@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import hashlib
 import hmac
+import io
+import logging
 import mimetypes
 import os
 import secrets
@@ -18,9 +20,11 @@ from typing import Annotated, Literal
 from fastapi import BackgroundTasks, FastAPI, File, Form, HTTPException, Request, UploadFile
 from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
+from starlette.datastructures import UploadFile as StarletteUploadFile
 
 
 BASE_PATH = os.getenv("BASE_PATH", "/drop").rstrip("/")
+PC_BASE_PATH = f"{BASE_PATH}-pc"
 PUBLIC_BASE_URL = os.getenv("PUBLIC_BASE_URL", "").rstrip("/")
 LOGIN_PASSWORD = os.getenv("LOGIN_PASSWORD", "")
 SESSION_SECRET = os.getenv("SESSION_SECRET", "")
@@ -122,6 +126,10 @@ def check_target(target: str) -> None:
         raise HTTPException(status_code=503, detail="电脑接收尚未配置，请先设置 PC_PULL_TOKEN 并启动电脑接收程序")
 
 
+def page_target(request: Request) -> str:
+    return "pc" if request.url.path.startswith((f"{PC_BASE_PATH}/", f"{BASE_PATH}/pc/")) else "ipad"
+
+
 def safe_name(name: str | None) -> str:
     candidate = Path((name or "file").replace("\\", "/")).name.strip()
     candidate = "".join(ch for ch in candidate if ch >= " " and ch not in '<>:"/\\|?*')
@@ -167,6 +175,7 @@ def send_trigger_email(count: int, names: list[str]) -> None:
             smtp.starttls(context=ssl.create_default_context())
             smtp.login(user, password)
             smtp.send_message(message)
+    logging.getLogger("uvicorn.error").info("iPad trigger email sent (%s files)", count)
 
 
 @asynccontextmanager
@@ -188,30 +197,39 @@ def health() -> dict[str, str]:
 
 @app.get(BASE_PATH, response_class=HTMLResponse)
 @app.get(f"{BASE_PATH}/", response_class=HTMLResponse)
-@app.get(f"{BASE_PATH}/pc/", response_class=HTMLResponse)
+@app.get(f"{PC_BASE_PATH}/", response_class=HTMLResponse)
+@app.head(f"{BASE_PATH}/")
+@app.head(f"{PC_BASE_PATH}/")
 def home(request: Request):
     page = "index.html" if valid_session(request.cookies.get(COOKIE_NAME)) else "login.html"
-    html = (STATIC_DIR / page).read_text(encoding="utf-8")
-    html = html.replace("<head>", f'<head><base href="{BASE_PATH}/">', 1)
-    if request.url.path.startswith(f"{BASE_PATH}/pc/"):
-        html = html.replace("发到 iPad", "发到电脑")
-        html = html.replace('href="manifest.webmanifest"', 'href="pc/manifest.webmanifest"')
-        html = html.replace('action="login"', 'action="pc/login"')
-        html = html.replace('data-target="ipad"', 'data-target="pc"')
-        html = html.replace('href="pc/"', 'href="./"').replace('安装“发到电脑”分享入口', '打开“发到 iPad”入口')
-    return HTMLResponse(html, headers={"Cache-Control": "no-store"})
+    target = page_target(request)
+    prefix = PC_BASE_PATH if target == "pc" else BASE_PATH
+    content = (STATIC_DIR / page).read_text(encoding="utf-8")
+    content = content.replace("<head>", f'<head><base href="{prefix}/">', 1)
+    content = content.replace('data-target="ipad"', f'data-target="{target}"')
+    content = content.replace('href="pc/"', f'href="{PC_BASE_PATH}/"')
+    if target == "pc":
+        content = content.replace("发到 iPad", "发到电脑")
+        content = content.replace(f'<a href="{PC_BASE_PATH}/"', f'<a href="{BASE_PATH}/"').replace('安装“发到电脑”分享入口', '打开“发到 iPad”入口')
+    content = content.replace('href="static/', f'href="{BASE_PATH}/static/').replace('src="static/', f'src="{BASE_PATH}/static/')
+    return HTMLResponse(content, headers={"Cache-Control": "no-store"})
 
 
 @app.get(f"{BASE_PATH}/pc")
+@app.get(f"{BASE_PATH}/pc/")
+@app.get(PC_BASE_PATH)
 def pc_home_redirect():
-    return RedirectResponse(f"{BASE_PATH}/pc/", status_code=307)
+    return RedirectResponse(f"{PC_BASE_PATH}/", status_code=307)
 
 
 @app.get(f"{BASE_PATH}/manifest.webmanifest")
 @app.get(f"{BASE_PATH}/pc/manifest.webmanifest")
+@app.get(f"{PC_BASE_PATH}/manifest.webmanifest")
+@app.head(f"{BASE_PATH}/manifest.webmanifest")
+@app.head(f"{PC_BASE_PATH}/manifest.webmanifest")
 def manifest(request: Request) -> JSONResponse:
-    pc = request.url.path.startswith(f"{BASE_PATH}/pc/")
-    prefix = f"{BASE_PATH}/pc" if pc else BASE_PATH
+    pc = page_target(request) == "pc"
+    prefix = PC_BASE_PATH if pc else BASE_PATH
     payload = {
         "name": "发到电脑" if pc else "发到 iPad",
         "short_name": "发到电脑" if pc else "发到 iPad",
@@ -242,25 +260,33 @@ def manifest(request: Request) -> JSONResponse:
 
 
 @app.get(f"{BASE_PATH}/sw.js")
-def service_worker() -> FileResponse:
-    return FileResponse(STATIC_DIR / "sw.js", media_type="application/javascript", headers={"Service-Worker-Allowed": f"{BASE_PATH}/"})
+@app.get(f"{PC_BASE_PATH}/sw.js")
+@app.head(f"{BASE_PATH}/sw.js")
+@app.head(f"{PC_BASE_PATH}/sw.js")
+def service_worker(request: Request) -> FileResponse:
+    prefix = PC_BASE_PATH if page_target(request) == "pc" else BASE_PATH
+    return FileResponse(STATIC_DIR / "sw.js", media_type="application/javascript", headers={"Service-Worker-Allowed": f"{prefix}/", "Cache-Control": "no-cache"})
 
 
 @app.post(f"{BASE_PATH}/login")
 @app.post(f"{BASE_PATH}/pc/login")
+@app.post(f"{PC_BASE_PATH}/login")
 def login(request: Request, password: Annotated[str, Form()]):
-    prefix = f"{BASE_PATH}/pc" if request.url.path.startswith(f"{BASE_PATH}/pc/") else BASE_PATH
+    prefix = PC_BASE_PATH if page_target(request) == "pc" else BASE_PATH
     if not hmac.compare_digest(password, LOGIN_PASSWORD):
         return RedirectResponse(f"{prefix}/?error=1", status_code=303)
     response = RedirectResponse(f"{prefix}/", status_code=303)
-    response.set_cookie(COOKIE_NAME, session_value(), max_age=90 * 24 * 3600, httponly=True, secure=True, samesite="lax", path=f"{BASE_PATH}/")
+    for cookie_path in (f"{BASE_PATH}/", f"{PC_BASE_PATH}/"):
+        response.set_cookie(COOKIE_NAME, session_value(), max_age=90 * 24 * 3600, httponly=True, secure=True, samesite="lax", path=cookie_path)
     return response
 
 
 @app.post(f"{BASE_PATH}/logout")
+@app.post(f"{PC_BASE_PATH}/logout")
 def logout() -> RedirectResponse:
     response = RedirectResponse(f"{BASE_PATH}/", status_code=303)
     response.delete_cookie(COOKIE_NAME, path=f"{BASE_PATH}/")
+    response.delete_cookie(COOKIE_NAME, path=f"{PC_BASE_PATH}/")
     return response
 
 
@@ -307,27 +333,44 @@ async def store_files(files: list[UploadFile], target: str = "ipad") -> list[dic
 
 @app.post(f"{BASE_PATH}/share", response_class=HTMLResponse)
 @app.post(f"{BASE_PATH}/pc/share", response_class=HTMLResponse)
-async def share_upload(request: Request, background_tasks: BackgroundTasks, files: Annotated[list[UploadFile], File()]):
+@app.post(f"{PC_BASE_PATH}/share", response_class=HTMLResponse)
+async def share_upload(request: Request, background_tasks: BackgroundTasks):
+    target = page_target(request)
     browser_auth(request)
-    target = "pc" if request.url.path.startswith(f"{BASE_PATH}/pc/") else "ipad"
     check_target(target)
+    form = await request.form(max_part_size=MAX_FILE_BYTES)
+    files = [value for _, value in form.multi_items() if isinstance(value, StarletteUploadFile)]
+    if not files:
+        text = "\n\n".join(str(form[key]).strip() for key in ("title", "text", "url") if key in form and str(form[key]).strip())
+        if text:
+            files = [UploadFile(filename="分享内容.txt", file=io.BytesIO(text.encode("utf-8")))]
+        else:
+            return HTMLResponse("<meta charset='utf-8'><p>这次分享没有附带文件或文字，请从相册或文件管理器重新分享。</p>", status_code=400)
     cleanup_expired()
     stored = await store_files(files, target)
     if target == "ipad":
         background_tasks.add_task(send_trigger_email, len(stored), [item["name"] for item in stored])
     label = "电脑" if target == "pc" else "iPad"
     destination = "等待电脑在线后自动保存" if target == "pc" else "等待 iPad 接收"
-    prefix = f"{BASE_PATH}/pc" if target == "pc" else BASE_PATH
+    prefix = PC_BASE_PATH if target == "pc" else BASE_PATH
     return HTMLResponse(
         "<!doctype html><meta charset='utf-8'><meta name='viewport' content='width=device-width'>"
         "<title>上传完成</title><style>body{font-family:system-ui;margin:0;display:grid;place-items:center;min-height:100vh;background:#f7f8fc}"
         ".box{text-align:center;background:#fff;padding:36px;border-radius:24px;box-shadow:0 12px 36px #20306018}.ok{font-size:64px;color:#17a765}</style>"
         f"<div class='box'><div class='ok'>✓</div><h1>已上传，发往{label}</h1><p>{len(stored)} 个文件，{destination}</p><a href='{prefix}/'>返回</a></div>"
-        "<script>setTimeout(()=>history.length>1&&history.back(),2500)</script>"
     )
 
 
+@app.get(f"{BASE_PATH}/share", response_class=HTMLResponse)
+@app.get(f"{BASE_PATH}/pc/share", response_class=HTMLResponse)
+@app.get(f"{PC_BASE_PATH}/share", response_class=HTMLResponse)
+def share_landing(request: Request):
+    prefix = PC_BASE_PATH if page_target(request) == "pc" else BASE_PATH
+    return RedirectResponse(f"{prefix}/", status_code=303)
+
+
 @app.post(f"{BASE_PATH}/upload")
+@app.post(f"{PC_BASE_PATH}/upload")
 async def browser_upload(request: Request, background_tasks: BackgroundTasks, files: Annotated[list[UploadFile], File()], target: Annotated[Literal["ipad", "pc"], Form()] = "ipad"):
     browser_auth(request)
     check_target(target)

@@ -209,7 +209,7 @@ pwsh -NoProfile -ExecutionPolicy Bypass -File .\desktop\install.ps1
 
 | 安装问题 | 填写内容 | 示例 |
 |---|---|---|
-| `【必须】PWA 完整地址` | 原来的 PWA 地址，包含 `/drop`，不要加 `/pc` | `https://drop.example.com/drop` |
+| `【必须】PWA 完整地址` | 原 iPad 服务地址，结尾是 `/drop`；不要填写电脑安装地址 `/drop-pc/` | `https://drop.example.com/drop` |
 | `【必须】电脑接收令牌 PC_PULL_TOKEN` | 上一步服务器显示的电脑令牌，不能使用 iPad 的 `PULL_TOKEN` | 粘贴电脑令牌 |
 
 程序自动创建桌面的 `来自vivo` 文件夹，并设置登录 Windows 后在后台接收。配置、日志和接收记录保存在当前用户的 `%USERPROFILE%\.easydrop`，不会提交到 GitHub。
@@ -218,13 +218,17 @@ pwsh -NoProfile -ExecutionPolicy Bypass -File .\desktop\install.ps1
 
 ### 3. 在 vivo 安装“发到电脑”分享入口
 
-1. 用手机 Chrome 打开服务器显示的“电脑分享入口”，例如 `https://drop.example.com/drop/pc/`。
+1. 用手机 Chrome 打开服务器显示的“电脑分享入口”，例如 `https://drop.example.com/drop-pc/`。
 2. 使用原来的 PWA 登录密码登录。
 3. 在 Chrome 菜单中选择“安装应用”或“添加到主屏幕”。
 4. 在手机选择文件，点击“分享”→“发到电脑”。
 5. 电脑在线时，文件通常几秒后出现在桌面的 `来自vivo` 文件夹中。
 
 也可以直接打开原来的上传网页，在“发送到”里选“电脑”，再选文件上传。原来的“发到 iPad”分享入口继续发给 iPad。
+
+两个安装入口必须使用互不包含的地址：iPad 为 `/drop/`，电脑为 `/drop-pc/`。旧电脑地址 `/drop/pc/` 会跳转到新地址。不要把电脑应用放在 iPad 应用的路径里面，否则已安装 iPad 应用的 Chrome 可能不再显示电脑应用的安装按钮。参见 [Chrome 团队对多个 PWA 的说明](https://web.dev/articles/building-multiple-pwas-on-the-same-domain)。
+
+页面支持分享照片、文件、文字和链接。文字或链接会保存成 `分享内容.txt`。安装前后都可以加载安装组件；如果旧页面还没更新，请关闭旧窗口，再用 Chrome 打开对应地址刷新。页面出现“安装到手机分享菜单”按钮时，点击它完成安装；仅创建普通网页快捷方式不会增加系统分享入口。
 
 ### 4. 查看或停止电脑接收
 

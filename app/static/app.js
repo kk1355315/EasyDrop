@@ -1,5 +1,4 @@
 const basePath = new URL('.', document.baseURI).pathname.replace(/\/$/, '');
-if ('serviceWorker' in navigator) navigator.serviceWorker.register(`${basePath}/sw.js`, {scope: `${basePath}/`});
 
 const input = document.querySelector('#files');
 const button = document.querySelector('#send');

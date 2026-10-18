@@ -29,5 +29,13 @@ if not value or value.startswith(('replace-', '#')):
 PY
 
 docker compose up -d --build
+NGINX_SITE="${1:-/etc/nginx/sites-available/easydrop}"
+if [[ -f "$NGINX_SITE" ]]; then
+  python3 deploy/configure_pc_proxy.py "$NGINX_SITE"
+  nginx -t
+  systemctl reload nginx
+else
+  echo '请按 deploy/nginx-location.conf.example 添加 /drop-pc/ 反向代理。'
+fi
 echo '电脑功能已启用。下面的令牌只填写到电脑接收程序，请勿公开：'
-docker compose exec -T drop python -c 'import os; print("电脑分享入口：" + os.environ["PUBLIC_BASE_URL"].rstrip("/") + "/pc/"); print("PC_PULL_TOKEN：" + os.environ["PC_PULL_TOKEN"])'
+docker compose exec -T drop python -c 'import os; print("电脑分享入口：" + os.environ["PUBLIC_BASE_URL"].rstrip("/") + "-pc/"); print("PC_PULL_TOKEN：" + os.environ["PC_PULL_TOKEN"])'

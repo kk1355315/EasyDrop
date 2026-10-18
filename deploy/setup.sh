@@ -216,6 +216,7 @@ server {
     }
 }
 EOF
+python3 deploy/configure_pc_proxy.py "${NGINX_SITE}"
 ln -sfn "${NGINX_SITE}" /etc/nginx/sites-enabled/easydrop
 nginx -t
 systemctl reload nginx
