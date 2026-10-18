@@ -1,0 +1,6 @@
+{
+  "server_url": "https://drop.example.com/drop",
+  "token": "replace-with-PC_PULL_TOKEN",
+  "destination": "C:/Users/YOUR_NAME/Desktop/来自vivo",
+  "poll_seconds": 5
+}

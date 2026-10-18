@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import hashlib
 import hmac
-import json
 import mimetypes
 import os
 import secrets
@@ -14,7 +13,7 @@ import urllib.parse
 from contextlib import asynccontextmanager
 from email.message import EmailMessage
 from pathlib import Path
-from typing import Annotated
+from typing import Annotated, Literal
 
 from fastapi import BackgroundTasks, FastAPI, File, Form, HTTPException, Request, UploadFile
 from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, RedirectResponse
@@ -26,6 +25,7 @@ PUBLIC_BASE_URL = os.getenv("PUBLIC_BASE_URL", "").rstrip("/")
 LOGIN_PASSWORD = os.getenv("LOGIN_PASSWORD", "")
 SESSION_SECRET = os.getenv("SESSION_SECRET", "")
 PULL_TOKEN = os.getenv("PULL_TOKEN", "")
+PC_PULL_TOKEN = os.getenv("PC_PULL_TOKEN", "")
 MAX_FILE_BYTES = int(os.getenv("MAX_FILE_BYTES", str(2 * 1024**3)))
 RETENTION_HOURS = int(os.getenv("RETENTION_HOURS", "48"))
 
@@ -45,6 +45,8 @@ def required_settings() -> None:
     }.items() if not value]
     if missing:
         raise RuntimeError(f"Missing required settings: {', '.join(missing)}")
+    if PC_PULL_TOKEN and hmac.compare_digest(PC_PULL_TOKEN, PULL_TOKEN):
+        raise RuntimeError("PC_PULL_TOKEN must be different from the iPad PULL_TOKEN")
 
 
 def db() -> sqlite3.Connection:
@@ -71,6 +73,9 @@ def init_db() -> None:
             )
             """
         )
+        columns = {row["name"] for row in connection.execute("PRAGMA table_info(files)")}
+        if "target" not in columns:
+            connection.execute("ALTER TABLE files ADD COLUMN target TEXT NOT NULL DEFAULT 'ipad'")
 
 
 def session_value() -> str:
@@ -97,11 +102,24 @@ def browser_auth(request: Request) -> None:
         raise HTTPException(status_code=401, detail="请先登录")
 
 
-def api_auth(request: Request) -> None:
+def api_auth(request: Request, target: str = "ipad") -> None:
     authorization = request.headers.get("authorization", "")
     supplied = authorization.removeprefix("Bearer ").strip() if authorization.startswith("Bearer ") else ""
-    if not supplied or not hmac.compare_digest(supplied, PULL_TOKEN):
+    # Existing signed iPad shortcuts may pass their token in the query string.
+    if target == "ipad" and not supplied:
+        supplied = request.query_params.get("token", "")
+    expected = PC_PULL_TOKEN if target == "pc" else PULL_TOKEN
+    if not expected or not supplied or not hmac.compare_digest(supplied, expected):
         raise HTTPException(status_code=401, detail="invalid token")
+
+
+def api_target(request: Request) -> str:
+    return "pc" if request.url.path.startswith(f"{BASE_PATH}/api/pc/") else "ipad"
+
+
+def check_target(target: str) -> None:
+    if target == "pc" and not PC_PULL_TOKEN:
+        raise HTTPException(status_code=503, detail="电脑接收尚未配置，请先设置 PC_PULL_TOKEN 并启动电脑接收程序")
 
 
 def safe_name(name: str | None) -> str:
@@ -170,21 +188,37 @@ def health() -> dict[str, str]:
 
 @app.get(BASE_PATH, response_class=HTMLResponse)
 @app.get(f"{BASE_PATH}/", response_class=HTMLResponse)
+@app.get(f"{BASE_PATH}/pc/", response_class=HTMLResponse)
 def home(request: Request):
-    if not valid_session(request.cookies.get(COOKIE_NAME)):
-        return FileResponse(STATIC_DIR / "login.html")
-    return FileResponse(STATIC_DIR / "index.html")
+    page = "index.html" if valid_session(request.cookies.get(COOKIE_NAME)) else "login.html"
+    html = (STATIC_DIR / page).read_text(encoding="utf-8")
+    html = html.replace("<head>", f'<head><base href="{BASE_PATH}/">', 1)
+    if request.url.path.startswith(f"{BASE_PATH}/pc/"):
+        html = html.replace("发到 iPad", "发到电脑")
+        html = html.replace('href="manifest.webmanifest"', 'href="pc/manifest.webmanifest"')
+        html = html.replace('action="login"', 'action="pc/login"')
+        html = html.replace('data-target="ipad"', 'data-target="pc"')
+        html = html.replace('href="pc/"', 'href="./"').replace('安装“发到电脑”分享入口', '打开“发到 iPad”入口')
+    return HTMLResponse(html, headers={"Cache-Control": "no-store"})
+
+
+@app.get(f"{BASE_PATH}/pc")
+def pc_home_redirect():
+    return RedirectResponse(f"{BASE_PATH}/pc/", status_code=307)
 
 
 @app.get(f"{BASE_PATH}/manifest.webmanifest")
-def manifest() -> JSONResponse:
+@app.get(f"{BASE_PATH}/pc/manifest.webmanifest")
+def manifest(request: Request) -> JSONResponse:
+    pc = request.url.path.startswith(f"{BASE_PATH}/pc/")
+    prefix = f"{BASE_PATH}/pc" if pc else BASE_PATH
     payload = {
-        "name": "发到 iPad",
-        "short_name": "发到 iPad",
-        "description": "把安卓里的照片和文件发到 iPad",
-        "id": f"{BASE_PATH}/",
-        "start_url": f"{BASE_PATH}/",
-        "scope": f"{BASE_PATH}/",
+        "name": "发到电脑" if pc else "发到 iPad",
+        "short_name": "发到电脑" if pc else "发到 iPad",
+        "description": "把安卓里的照片和文件发到电脑" if pc else "把安卓里的照片和文件发到 iPad",
+        "id": f"{prefix}/",
+        "start_url": f"{prefix}/",
+        "scope": f"{prefix}/",
         "display": "standalone",
         "background_color": "#f7f8fc",
         "theme_color": "#2457e6",
@@ -193,7 +227,7 @@ def manifest() -> JSONResponse:
             {"src": f"{BASE_PATH}/static/icon-512.png", "sizes": "512x512", "type": "image/png"},
         ],
         "share_target": {
-            "action": f"{BASE_PATH}/share",
+            "action": f"{prefix}/share",
             "method": "POST",
             "enctype": "multipart/form-data",
             "params": {
@@ -213,10 +247,12 @@ def service_worker() -> FileResponse:
 
 
 @app.post(f"{BASE_PATH}/login")
-def login(password: Annotated[str, Form()]):
+@app.post(f"{BASE_PATH}/pc/login")
+def login(request: Request, password: Annotated[str, Form()]):
+    prefix = f"{BASE_PATH}/pc" if request.url.path.startswith(f"{BASE_PATH}/pc/") else BASE_PATH
     if not hmac.compare_digest(password, LOGIN_PASSWORD):
-        return RedirectResponse(f"{BASE_PATH}/?error=1", status_code=303)
-    response = RedirectResponse(f"{BASE_PATH}/", status_code=303)
+        return RedirectResponse(f"{prefix}/?error=1", status_code=303)
+    response = RedirectResponse(f"{prefix}/", status_code=303)
     response.set_cookie(COOKIE_NAME, session_value(), max_age=90 * 24 * 3600, httponly=True, secure=True, samesite="lax", path=f"{BASE_PATH}/")
     return response
 
@@ -228,7 +264,7 @@ def logout() -> RedirectResponse:
     return response
 
 
-async def store_files(files: list[UploadFile]) -> list[dict]:
+async def store_files(files: list[UploadFile], target: str = "ipad") -> list[dict]:
     if not files:
         raise HTTPException(status_code=400, detail="没有收到文件")
     results: list[dict] = []
@@ -252,11 +288,11 @@ async def store_files(files: list[UploadFile]) -> list[dict]:
                     output.write(chunk)
             mime = upload.content_type or mimetypes.guess_type(original_name)[0] or "application/octet-stream"
             now = int(time.time())
-            db_rows.append((item_id, original_name, stored_name, mime, size, digest.hexdigest(), now))
+            db_rows.append((item_id, original_name, stored_name, mime, size, digest.hexdigest(), now, target))
             results.append({"id": item_id, "name": original_name, "mime": mime, "size": size})
         with db() as connection:
             connection.executemany(
-                "INSERT INTO files VALUES (?, ?, ?, ?, ?, ?, ?, NULL)",
+                "INSERT INTO files (id, original_name, stored_name, mime, size, sha256, created_at, target) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
                 db_rows,
             )
         return results
@@ -270,38 +306,50 @@ async def store_files(files: list[UploadFile]) -> list[dict]:
 
 
 @app.post(f"{BASE_PATH}/share", response_class=HTMLResponse)
+@app.post(f"{BASE_PATH}/pc/share", response_class=HTMLResponse)
 async def share_upload(request: Request, background_tasks: BackgroundTasks, files: Annotated[list[UploadFile], File()]):
     browser_auth(request)
+    target = "pc" if request.url.path.startswith(f"{BASE_PATH}/pc/") else "ipad"
+    check_target(target)
     cleanup_expired()
-    stored = await store_files(files)
-    background_tasks.add_task(send_trigger_email, len(stored), [item["name"] for item in stored])
-    names_json = json.dumps([item["name"] for item in stored], ensure_ascii=False)
+    stored = await store_files(files, target)
+    if target == "ipad":
+        background_tasks.add_task(send_trigger_email, len(stored), [item["name"] for item in stored])
+    label = "电脑" if target == "pc" else "iPad"
+    destination = "等待电脑在线后自动保存" if target == "pc" else "等待 iPad 接收"
+    prefix = f"{BASE_PATH}/pc" if target == "pc" else BASE_PATH
     return HTMLResponse(
         "<!doctype html><meta charset='utf-8'><meta name='viewport' content='width=device-width'>"
         "<title>上传完成</title><style>body{font-family:system-ui;margin:0;display:grid;place-items:center;min-height:100vh;background:#f7f8fc}"
         ".box{text-align:center;background:#fff;padding:36px;border-radius:24px;box-shadow:0 12px 36px #20306018}.ok{font-size:64px;color:#17a765}</style>"
-        f"<div class='box'><div class='ok'>✓</div><h1>已发到 iPad</h1><p>{len(stored)} 个文件已上传</p><a href='{BASE_PATH}/'>返回</a></div>"
-        f"<script>console.log({names_json});setTimeout(()=>history.length>1&&history.back(),2500)</script>"
+        f"<div class='box'><div class='ok'>✓</div><h1>已上传，发往{label}</h1><p>{len(stored)} 个文件，{destination}</p><a href='{prefix}/'>返回</a></div>"
+        "<script>setTimeout(()=>history.length>1&&history.back(),2500)</script>"
     )
 
 
 @app.post(f"{BASE_PATH}/upload")
-async def browser_upload(request: Request, background_tasks: BackgroundTasks, files: Annotated[list[UploadFile], File()]):
+async def browser_upload(request: Request, background_tasks: BackgroundTasks, files: Annotated[list[UploadFile], File()], target: Annotated[Literal["ipad", "pc"], Form()] = "ipad"):
     browser_auth(request)
+    check_target(target)
     cleanup_expired()
-    stored = await store_files(files)
-    background_tasks.add_task(send_trigger_email, len(stored), [item["name"] for item in stored])
-    return {"ok": True, "files": stored}
+    stored = await store_files(files, target)
+    if target == "ipad":
+        background_tasks.add_task(send_trigger_email, len(stored), [item["name"] for item in stored])
+    return {"ok": True, "files": stored, "target": target}
 
 
 @app.get(f"{BASE_PATH}/api/pending")
+@app.get(f"{BASE_PATH}/api/pc/pending")
 def pending(request: Request):
-    api_auth(request)
+    target = api_target(request)
+    api_auth(request, target)
     cleanup_expired()
     with db() as connection:
         rows = connection.execute(
-            "SELECT id, original_name, mime, size, sha256, created_at FROM files WHERE acknowledged_at IS NULL ORDER BY created_at"
+            "SELECT id, original_name, mime, size, sha256, created_at FROM files WHERE acknowledged_at IS NULL AND target = ? ORDER BY created_at, id",
+            (target,),
         ).fetchall()
+    api_prefix = f"{PUBLIC_BASE_URL}/api/pc" if target == "pc" else f"{PUBLIC_BASE_URL}/api"
     return [{
         "id": row["id"],
         "name": row["original_name"],
@@ -309,23 +357,25 @@ def pending(request: Request):
         "size": row["size"],
         "sha256": row["sha256"],
         "created_at": row["created_at"],
-        "download_url": f"{PUBLIC_BASE_URL}/api/file/{urllib.parse.quote(row['id'])}",
-        "ack_url": f"{PUBLIC_BASE_URL}/api/ack/{urllib.parse.quote(row['id'])}",
+        "download_url": f"{api_prefix}/file/{urllib.parse.quote(row['id'])}",
+        "ack_url": f"{api_prefix}/ack/{urllib.parse.quote(row['id'])}",
     } for row in rows]
 
 
-def get_row(item_id: str) -> sqlite3.Row:
+def get_row(item_id: str, target: str = "ipad") -> sqlite3.Row:
     with db() as connection:
-        row = connection.execute("SELECT * FROM files WHERE id = ? AND acknowledged_at IS NULL", (item_id,)).fetchone()
+        row = connection.execute("SELECT * FROM files WHERE id = ? AND acknowledged_at IS NULL AND target = ?", (item_id, target)).fetchone()
     if not row:
         raise HTTPException(status_code=404, detail="file not found")
     return row
 
 
 @app.get(f"{BASE_PATH}/api/file/{{item_id}}")
+@app.get(f"{BASE_PATH}/api/pc/file/{{item_id}}")
 def download(item_id: str, request: Request):
-    api_auth(request)
-    row = get_row(item_id)
+    target = api_target(request)
+    api_auth(request, target)
+    row = get_row(item_id, target)
     path = FILES_DIR / row["stored_name"]
     if not path.is_file():
         raise HTTPException(status_code=404, detail="file missing")
@@ -342,9 +392,11 @@ def download(item_id: str, request: Request):
 
 
 @app.post(f"{BASE_PATH}/api/ack/{{item_id}}")
+@app.post(f"{BASE_PATH}/api/pc/ack/{{item_id}}")
 def acknowledge(item_id: str, request: Request):
-    api_auth(request)
-    row = get_row(item_id)
+    target = api_target(request)
+    api_auth(request, target)
+    row = get_row(item_id, target)
     (FILES_DIR / row["stored_name"]).unlink(missing_ok=True)
     with db() as connection:
         connection.execute("DELETE FROM files WHERE id = ?", (item_id,))

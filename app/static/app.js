@@ -1,4 +1,4 @@
-const basePath = new URL('.', location.href).pathname.replace(/\/$/, '');
+const basePath = new URL('.', document.baseURI).pathname.replace(/\/$/, '');
 if ('serviceWorker' in navigator) navigator.serviceWorker.register(`${basePath}/sw.js`, {scope: `${basePath}/`});
 
 const input = document.querySelector('#files');
@@ -6,6 +6,8 @@ const button = document.querySelector('#send');
 const selection = document.querySelector('#selection');
 const status = document.querySelector('#status');
 const form = document.querySelector('#upload-form');
+const defaultTarget = document.body.dataset.target || 'ipad';
+form.elements.target.value = defaultTarget;
 
 input.addEventListener('change', () => {
   const files = [...input.files];
@@ -16,6 +18,7 @@ input.addEventListener('change', () => {
 
 form.addEventListener('submit', async (event) => {
   event.preventDefault();
+  const target = form.elements.target.value;
   button.disabled = true;
   button.textContent = '上传中…';
   status.textContent = '';
@@ -24,9 +27,12 @@ form.addEventListener('submit', async (event) => {
     if (response.status === 401) { location.reload(); return; }
     const data = await response.json();
     if (!response.ok) throw new Error(data.detail || '上传失败');
-    status.textContent = `✓ 已发送 ${data.files.length} 个文件`;
+    status.textContent = target === 'pc'
+      ? `✓ 已上传 ${data.files.length} 个文件，电脑在线后会自动保存`
+      : `✓ 已上传 ${data.files.length} 个文件，等待 iPad 接收`;
     status.className = 'status success';
     form.reset();
+    form.elements.target.value = target;
     selection.hidden = true;
   } catch (error) {
     status.textContent = error.message;

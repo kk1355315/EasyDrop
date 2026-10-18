@@ -4,6 +4,8 @@
 
 在 Android 上安装 PWA 后，它会出现在系统分享菜单中。文件上传到自己的服务器后，服务器发送一封触发邮件。iPad 的“快捷指令”自动化收到邮件，随后下载文件：照片和视频进入“照片”，其他文件进入 iCloud Drive。
 
+也支持“发到电脑”：Windows 接收程序会自动下载文件，保存到桌面上的 `来自vivo` 文件夹。iPad 和电脑使用独立队列，各自只接收发给自己的文件。
+
 ```text
 Android 分享菜单 → PWA → FastAPI → 触发邮件
                                   ↓
@@ -14,6 +16,8 @@ Android 分享菜单 → PWA → FastAPI → 触发邮件
 
 - Android Web Share Target，支持多文件分享
 - 普通网页上传
+- 分别安装“发到 iPad”和“发到电脑”两个系统分享入口
+- Windows 登录后自动接收，保存到桌面的 `来自vivo`，同名文件自动编号
 - 密码登录和 HttpOnly Cookie
 - 独立的 iPad 拉取令牌
 - SQLite 持久化待处理队列
@@ -169,6 +173,76 @@ iPad PULL_TOKEN
 
 测试成功后，日常使用不需要打开“快捷指令”App，也不需要手工运行 `接收文件新`。
 
+## 发到电脑（Windows）
+
+已有 iPad 功能可以继续使用。启用电脑功能需要在服务器运行一次命令，然后在电脑安装一次接收程序。
+
+### 1. 在服务器启用电脑接收
+
+SSH 登录服务器后，在你克隆的 EasyDrop 目录中运行：
+
+```bash
+cd ~/EasyDrop
+git pull --ff-only
+sudo bash deploy/enable-pc.sh
+```
+
+`【可能需要修改】cd ~/EasyDrop`：如果你安装在其他目录，请换成实际目录。例如 `/opt/ipad-drop`。
+
+脚本保留现有密码、iPad 令牌和邮件设置，只增加独立的电脑令牌并更新服务。完成后显示“电脑分享入口”和 `PC_PULL_TOKEN`。把这个令牌保存好，下面安装电脑接收程序时需要填写。
+
+### 2. 在 Windows 安装接收程序
+
+电脑需要安装 Python 3.11 或更新版本，以及 Git。安装 Python 时请保留 Python Launcher（`py`）。
+
+打开 PowerShell，复制执行：
+
+```powershell
+git clone https://github.com/kk1355315/EasyDrop.git "$env:USERPROFILE\EasyDrop"
+Set-Location "$env:USERPROFILE\EasyDrop"
+pwsh -NoProfile -ExecutionPolicy Bypass -File .\desktop\install.ps1
+```
+
+如果电脑上已经有这个仓库，进入已有仓库运行 `git pull --ff-only`，然后只执行最后一行。最后一行需要 PowerShell 7（`pwsh`）。如果系统提示无权创建计划任务，请使用管理员身份打开 PowerShell，并在同一个 Windows 用户下重试。
+
+安装时必须填写两项：
+
+| 安装问题 | 填写内容 | 示例 |
+|---|---|---|
+| `【必须】PWA 完整地址` | 原来的 PWA 地址，包含 `/drop`，不要加 `/pc` | `https://drop.example.com/drop` |
+| `【必须】电脑接收令牌 PC_PULL_TOKEN` | 上一步服务器显示的电脑令牌，不能使用 iPad 的 `PULL_TOKEN` | 粘贴电脑令牌 |
+
+程序自动创建桌面的 `来自vivo` 文件夹，并设置登录 Windows 后在后台接收。配置、日志和接收记录保存在当前用户的 `%USERPROFILE%\.easydrop`，不会提交到 GitHub。
+
+电脑必须开机、已登录并联网。锁屏时可以接收；关机或休眠时暂存服务器，上线后继续接收，仍受默认 48 小时保留时间限制。文件会先完成 SHA-256 校验，再确认删除服务器副本。同名文件会自动加 `(1)`、`(2)`，不会覆盖已有文件。
+
+### 3. 在 vivo 安装“发到电脑”分享入口
+
+1. 用手机 Chrome 打开服务器显示的“电脑分享入口”，例如 `https://drop.example.com/drop/pc/`。
+2. 使用原来的 PWA 登录密码登录。
+3. 在 Chrome 菜单中选择“安装应用”或“添加到主屏幕”。
+4. 在手机选择文件，点击“分享”→“发到电脑”。
+5. 电脑在线时，文件通常几秒后出现在桌面的 `来自vivo` 文件夹中。
+
+也可以直接打开原来的上传网页，在“发送到”里选“电脑”，再选文件上传。原来的“发到 iPad”分享入口继续发给 iPad。
+
+### 4. 查看或停止电脑接收
+
+在 Windows PowerShell 中运行：
+
+```powershell
+# 查看状态
+Get-ScheduledTask -TaskName EasyDrop-PC-Receiver
+# 查看最近的日志
+Get-Content "$env:USERPROFILE\.easydrop\receiver.log" -Tail 30
+# 暂停接收；登录 Windows 后还会自动启动
+Stop-ScheduledTask -TaskName EasyDrop-PC-Receiver
+# 恢复接收
+Start-ScheduledTask -TaskName EasyDrop-PC-Receiver
+# 取消自动启动（保留文件和配置）
+Disable-ScheduledTask -TaskName EasyDrop-PC-Receiver
+```
+
 ## 常用维护命令
 
 进入项目目录：
@@ -249,6 +323,7 @@ Authorization: Bearer <PULL_TOKEN>
 | `LOGIN_PASSWORD` | Android/PWA 登录密码 |
 | `SESSION_SECRET` | Cookie 签名密钥 |
 | `PULL_TOKEN` | iPad API 令牌 |
+| `PC_PULL_TOKEN` | 电脑独立 API 令牌；留空时电脑上传功能关闭 |
 | `MAX_FILE_BYTES` | 单个文件最大字节数 |
 | `RETENTION_HOURS` | 未接收文件保留小时数 |
 | `SMTP_*` | SMTP 服务器和账号配置 |

@@ -1,0 +1,1 @@
+.targets{display:flex;gap:12px;border:0;padding:0;margin:0 0 18px}.targets legend{font-weight:650;margin-bottom:8px}.targets label{flex:1;display:block;margin:0!important;padding:12px;border:1px solid #ccd3e1;border-radius:12px;cursor:pointer}.targets label:has(input:checked){border-color:#2457e6;background:#edf2ff}.targets input{accent-color:#2457e6}a{color:#2457e6}

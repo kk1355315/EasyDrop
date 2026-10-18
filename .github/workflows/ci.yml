@@ -18,5 +18,6 @@ jobs:
           cache: pip
       - run: pip install -r requirements.txt -r requirements-dev.txt
       - run: bash -n deploy/setup.sh
-      - run: python -m compileall -q app
+      - run: bash -n deploy/enable-pc.sh
+      - run: python -m compileall -q app desktop
       - run: python -m pytest -q

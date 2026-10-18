@@ -5,8 +5,11 @@ __pycache__/
 .pytest_cache/
 .venv/
 .server-snapshot/
+backups/
+pc-release.tgz
 *.pem
 *.key
 *.crt
 tests/*cookie*
 tests/downloaded*
+.local/

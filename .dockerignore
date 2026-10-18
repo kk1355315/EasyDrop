@@ -1,8 +1,14 @@
-.env
+.env*
+!.env.example
 data
 .git
 .github
 .server-snapshot
+backups
+pc-release.tgz
+.local
+.venv
+desktop
 __pycache__
 *.pyc
 .pytest_cache
