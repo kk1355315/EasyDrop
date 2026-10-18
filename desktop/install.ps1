@@ -34,8 +34,20 @@ if ($Configuration) {
 $config | Add-Member -NotePropertyName destination -NotePropertyValue $destination -Force
 $config | Add-Member -NotePropertyName poll_seconds -NotePropertyValue 5 -Force
 $installedConfig = Join-Path $installDir 'receiver.json'
+$taskName = 'EasyDrop-PC-Receiver'
+if (Get-ScheduledTask -TaskName $taskName -ErrorAction SilentlyContinue) {
+    Stop-ScheduledTask -TaskName $taskName
+    # Task termination is asynchronous. Wait for its worker to release the lock.
+    for ($attempt = 0; $attempt -lt 20; $attempt++) {
+        $oldWorkers = @(Get-CimInstance Win32_Process -Filter "Name = 'pythonw.exe'" | Where-Object { $_.CommandLine -and $_.CommandLine.Contains((Join-Path $installDir 'receiver.py')) })
+        if (-not $oldWorkers) { break }
+        Start-Sleep -Milliseconds 250
+    }
+    if ($oldWorkers) { throw '旧的接收程序尚未退出，请稍后重试安装。' }
+}
 $config | ConvertTo-Json | Set-Content -LiteralPath $installedConfig -Encoding utf8
 Copy-Item -LiteralPath (Join-Path $PSScriptRoot 'receiver.py') -Destination (Join-Path $installDir 'receiver.py') -Force
+Copy-Item -LiteralPath (Join-Path $PSScriptRoot 'notifications.py') -Destination (Join-Path $installDir 'notifications.py') -Force
 
 if (-not $PythonPath) {
     $PythonPath = (& py -3 -c 'import sys; print(sys.executable)').Trim()
@@ -44,15 +56,11 @@ if (-not $PythonPath) {
 $pythonw = Join-Path (Split-Path -Parent $PythonPath) 'pythonw.exe'
 if (-not (Test-Path -LiteralPath $pythonw)) { throw "找不到 pythonw.exe：$pythonw" }
 
-$taskName = 'EasyDrop-PC-Receiver'
 $arguments = '"{0}" --config "{1}"' -f (Join-Path $installDir 'receiver.py'), $installedConfig
 $action = New-ScheduledTaskAction -Execute $pythonw -Argument $arguments
 $trigger = New-ScheduledTaskTrigger -AtLogOn -User $identity
 $principal = New-ScheduledTaskPrincipal -UserId $identity -LogonType Interactive -RunLevel Limited
 $settings = New-ScheduledTaskSettingsSet -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries -StartWhenAvailable -RestartCount 999 -RestartInterval (New-TimeSpan -Minutes 1) -ExecutionTimeLimit ([TimeSpan]::Zero) -MultipleInstances IgnoreNew
-if (Get-ScheduledTask -TaskName $taskName -ErrorAction SilentlyContinue) {
-    Stop-ScheduledTask -TaskName $taskName
-}
 Register-ScheduledTask -TaskName $taskName -Action $action -Trigger $trigger -Principal $principal -Settings $settings -Force | Out-Null
 Start-ScheduledTask -TaskName $taskName
 Start-Sleep -Milliseconds 800

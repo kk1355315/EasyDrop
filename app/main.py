@@ -207,10 +207,8 @@ def home(request: Request):
     content = (STATIC_DIR / page).read_text(encoding="utf-8")
     content = content.replace("<head>", f'<head><base href="{prefix}/">', 1)
     content = content.replace('data-target="ipad"', f'data-target="{target}"')
-    content = content.replace('href="pc/"', f'href="{PC_BASE_PATH}/"')
     if target == "pc":
         content = content.replace("发到 iPad", "发到电脑")
-        content = content.replace(f'<a href="{PC_BASE_PATH}/"', f'<a href="{BASE_PATH}/"').replace('安装“发到电脑”分享入口', '打开“发到 iPad”入口')
     content = content.replace('href="static/', f'href="{BASE_PATH}/static/').replace('src="static/', f'src="{BASE_PATH}/static/')
     return HTMLResponse(content, headers={"Cache-Control": "no-store"})
 

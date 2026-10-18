@@ -8,6 +8,7 @@ import pytest
 
 from app import main
 from desktop.receiver import Receiver, safe_filename
+from desktop.notifications import receipt_text
 
 
 @pytest.fixture
@@ -200,6 +201,48 @@ def test_corrupt_download_keeps_server_copy(pc_client, tmp_path):
     assert list((tmp_path / "来自vivo").iterdir()) == []
     assert len(client.get("/drop/api/pc/pending", headers=PC).json()) == 1
     receiver.journal.close()
+
+
+def test_receipt_notification_is_grouped_and_not_repeated_on_ack_retry(pc_client, tmp_path):
+    client, _ = pc_client
+    for name in ("one.txt", "two.txt"):
+        client.post("/drop-pc/share", files={"files": (name, b"received")})
+    notices = []
+    receiver = Receiver(receiver_config(tmp_path), tmp_path / "state", TestOpener(client, fail_ack=True), notifier=lambda files: notices.append(list(files)))
+    assert not receiver.run_once()
+    assert len(notices) == 1
+    assert len(notices[0]) == 2
+    assert receiver.run_once()
+    assert len(notices) == 1
+    receiver.journal.close()
+
+
+def test_notification_failure_does_not_break_receiving(pc_client, tmp_path):
+    client, _ = pc_client
+    client.post("/drop-pc/share", files={"files": ("safe.txt", b"saved")})
+    def broken_notification(files):
+        raise OSError("notifications disabled")
+    receiver = Receiver(receiver_config(tmp_path), tmp_path / "state", TestOpener(client), notifier=broken_notification)
+    assert receiver.run_once()
+    assert (tmp_path / "来自vivo" / "safe.txt").read_bytes() == b"saved"
+    assert client.get("/drop/api/pc/pending", headers=PC).json() == []
+    receiver.journal.close()
+
+
+def test_pages_have_no_cross_install_links(pc_client):
+    client, _ = pc_client
+    for prefix in ("/drop/", "/drop-pc/"):
+        page = client.get(prefix).text
+        assert "安装“发到电脑”分享入口" not in page
+        assert "打开“发到 iPad”入口" not in page
+        assert 'id="install"' in page
+
+
+def test_receipt_text_includes_file_count_and_names(tmp_path):
+    title, text = receipt_text([tmp_path / "照片.jpg", tmp_path / "notes.txt"])
+    assert "2 个文件" in title
+    assert "照片.jpg" in text and "notes.txt" in text
+    assert "来自vivo" in text
 
 
 @pytest.mark.parametrize("value,expected", [("../../vivo.txt", "vivo.txt"), ("C:\\folder\\照片.jpg", "照片.jpg"), ("CON.txt", "_CON.txt"), ("..", "file"), ("a?.txt. ", "a_.txt")])

@@ -42,7 +42,7 @@ def file_matches(path: Path, size: int, sha256: str) -> bool:
 
 
 class Receiver:
-    def __init__(self, config: dict, state_dir: Path, opener=None):
+    def __init__(self, config: dict, state_dir: Path, opener=None, notifier=None):
         url = str(config["server_url"]).rstrip("/")
         parsed = urllib.parse.urlsplit(url)
         if parsed.scheme != "https" or not parsed.netloc or parsed.username or parsed.password or parsed.query or parsed.fragment:
@@ -57,6 +57,8 @@ class Receiver:
         self.journal = sqlite3.connect(state_dir / "received.sqlite3")
         self.journal.execute("CREATE TABLE IF NOT EXISTS received (id TEXT PRIMARY KEY, path TEXT NOT NULL)")
         self.opener = opener or urllib.request.build_opener(NoRedirect())
+        self.notifier = notifier
+        self.newly_saved: list[Path] = []
 
     def request(self, path: str, method: str = "GET"):
         request = urllib.request.Request(
@@ -120,6 +122,7 @@ class Receiver:
                 except FileExistsError:
                     serial += 1
                     candidate = self.destination / f"{Path(name).stem} ({serial}){Path(name).suffix}"
+            self.newly_saved.append(candidate)
             self.acknowledge(item_id)
             logging.info("已保存：%s", candidate.name)
             return candidate
@@ -128,6 +131,7 @@ class Receiver:
                 temporary.unlink(missing_ok=True)
 
     def run_once(self) -> bool:
+        self.newly_saved = []
         with self.request("/pending") as response:
             items = json.load(response)
         success = True
@@ -137,6 +141,11 @@ class Receiver:
             except Exception:
                 logging.exception("接收失败，稍后重试：%s", item.get("name", "file"))
                 success = False
+        if self.notifier and self.newly_saved:
+            try:
+                self.notifier(self.newly_saved)
+            except Exception:
+                logging.exception("接收通知失败，文件已保存")
         return success
 
 
@@ -164,6 +173,12 @@ def main() -> int:
     with config_path.open(encoding="utf-8-sig") as source:
         config = json.load(source)
     receiver = Receiver(config, state_dir)
+    if os.name == "nt":
+        try:
+            from .notifications import DesktopNotifier
+        except ImportError:
+            from notifications import DesktopNotifier
+        receiver.notifier = DesktopNotifier(receiver.destination)
     interval = max(2, int(config.get("poll_seconds", 5)))
     logging.info("电脑接收已启动")
     while True:
