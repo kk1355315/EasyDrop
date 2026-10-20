@@ -48,6 +48,7 @@ if (Get-ScheduledTask -TaskName $taskName -ErrorAction SilentlyContinue) {
 $config | ConvertTo-Json | Set-Content -LiteralPath $installedConfig -Encoding utf8
 Copy-Item -LiteralPath (Join-Path $PSScriptRoot 'receiver.py') -Destination (Join-Path $installDir 'receiver.py') -Force
 Copy-Item -LiteralPath (Join-Path $PSScriptRoot 'notifications.py') -Destination (Join-Path $installDir 'notifications.py') -Force
+Copy-Item -LiteralPath (Join-Path $PSScriptRoot 'clipboard.py') -Destination (Join-Path $installDir 'clipboard.py') -Force
 
 if (-not $PythonPath) {
     $PythonPath = (& py -3 -c 'import sys; print(sys.executable)').Trim()

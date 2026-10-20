@@ -8,12 +8,13 @@ import queue
 import threading
 
 
-def receipt_text(paths: list[Path]) -> tuple[str, str]:
+def receipt_text(paths: list[Path], clipboard_copied: bool = False) -> tuple[str, str]:
     title = f"EasyDrop · 收到 {len(paths)} 个文件"
     names = "、".join(path.name for path in paths[:3])
     if len(paths) > 3:
         names += "等"
-    return title, f"{names[:160]}\n已保存到桌面“来自vivo”\n点击打开文件夹"
+    copied = "\n已复制，可直接 Ctrl+V 粘贴" if clipboard_copied else ""
+    return title, f"{names[:160]}\n已保存到桌面“来自vivo”{copied}\n点击打开文件夹"
 
 
 class DesktopNotifier:
@@ -24,10 +25,10 @@ class DesktopNotifier:
         self.hwnd = None
         self.thread = None
 
-    def __call__(self, paths: list[Path]) -> None:
+    def __call__(self, paths: list[Path], *, clipboard_copied: bool = False) -> None:
         if not paths or os.name != "nt":
             return
-        self.messages.put(receipt_text(paths))
+        self.messages.put(receipt_text(paths, clipboard_copied))
         if not self.thread or not self.thread.is_alive():
             self.ready.clear()
             self.thread = threading.Thread(target=self._run, name="EasyDrop-Notifications", daemon=True)

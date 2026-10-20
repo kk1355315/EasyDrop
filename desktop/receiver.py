@@ -42,7 +42,7 @@ def file_matches(path: Path, size: int, sha256: str) -> bool:
 
 
 class Receiver:
-    def __init__(self, config: dict, state_dir: Path, opener=None, notifier=None):
+    def __init__(self, config: dict, state_dir: Path, opener=None, notifier=None, clipboard=None):
         url = str(config["server_url"]).rstrip("/")
         parsed = urllib.parse.urlsplit(url)
         if parsed.scheme != "https" or not parsed.netloc or parsed.username or parsed.password or parsed.query or parsed.fragment:
@@ -58,6 +58,8 @@ class Receiver:
         self.journal.execute("CREATE TABLE IF NOT EXISTS received (id TEXT PRIMARY KEY, path TEXT NOT NULL)")
         self.opener = opener or urllib.request.build_opener(NoRedirect())
         self.notifier = notifier
+        self.clipboard = clipboard
+        self.clipboard_copied = False
         self.newly_saved: list[Path] = []
 
     def request(self, path: str, method: str = "GET"):
@@ -132,6 +134,7 @@ class Receiver:
 
     def run_once(self) -> bool:
         self.newly_saved = []
+        self.clipboard_copied = False
         with self.request("/pending") as response:
             items = json.load(response)
         success = True
@@ -141,6 +144,13 @@ class Receiver:
             except Exception:
                 logging.exception("接收失败，稍后重试：%s", item.get("name", "file"))
                 success = False
+        if self.clipboard and self.newly_saved:
+            try:
+                self.clipboard(self.newly_saved)
+                self.clipboard_copied = True
+                logging.info("已复制到剪贴板：%s 个文件", len(self.newly_saved))
+            except Exception:
+                logging.exception("复制到剪贴板失败，文件已保存")
         if self.notifier and self.newly_saved:
             try:
                 self.notifier(self.newly_saved)
@@ -176,9 +186,13 @@ def main() -> int:
     if os.name == "nt":
         try:
             from .notifications import DesktopNotifier
+            from .clipboard import copy_files
         except ImportError:
             from notifications import DesktopNotifier
-        receiver.notifier = DesktopNotifier(receiver.destination)
+            from clipboard import copy_files
+        receiver.clipboard = copy_files
+        notifier = DesktopNotifier(receiver.destination)
+        receiver.notifier = lambda paths: notifier(paths, clipboard_copied=receiver.clipboard_copied)
     interval = max(2, int(config.get("poll_seconds", 5)))
     logging.info("电脑接收已启动")
     while True:

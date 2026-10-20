@@ -1,5 +1,6 @@
 import io
 import sqlite3
+import struct
 import urllib.error
 from urllib.parse import urlsplit
 
@@ -9,6 +10,7 @@ import pytest
 from app import main
 from desktop.receiver import Receiver, safe_filename
 from desktop.notifications import receipt_text
+from desktop.clipboard import file_drop_payload
 
 
 @pytest.fixture
@@ -243,6 +245,69 @@ def test_receipt_text_includes_file_count_and_names(tmp_path):
     assert "2 个文件" in title
     assert "照片.jpg" in text and "notes.txt" in text
     assert "来自vivo" in text
+
+
+def test_received_files_are_copied_together_before_notification_and_not_on_retry(pc_client, tmp_path):
+    client, _ = pc_client
+    for name in ("photo.jpg", "notes.txt"):
+        client.post("/drop-pc/share", files={"files": (name, b"received")})
+    events = []
+    receiver = Receiver(
+        receiver_config(tmp_path), tmp_path / "state", TestOpener(client, fail_ack=True),
+        clipboard=lambda files: events.append(("copy", list(files))),
+        notifier=lambda files: events.append(("notify", list(files))),
+    )
+    assert not receiver.run_once()
+    assert receiver.clipboard_copied
+    assert [event[0] for event in events] == ["copy", "notify"]
+    assert len(events[0][1]) == 2
+    assert all(path.is_file() for path in events[0][1])
+    assert receiver.run_once()
+    assert len(events) == 2  # Do not overwrite anything the user copied during retries.
+    assert receiver.run_once()
+    assert len(events) == 2
+    receiver.journal.close()
+
+
+def test_clipboard_failure_keeps_saved_file_and_still_notifies(pc_client, tmp_path):
+    client, _ = pc_client
+    client.post("/drop-pc/share", files={"files": ("safe.txt", b"saved")})
+    notices = []
+    def busy_clipboard(files):
+        raise OSError("clipboard busy")
+    receiver = Receiver(receiver_config(tmp_path), tmp_path / "state", TestOpener(client), clipboard=busy_clipboard, notifier=lambda files: notices.extend(files))
+    assert receiver.run_once()
+    assert not receiver.clipboard_copied
+    assert notices[0].read_bytes() == b"saved"
+    assert client.get("/drop/api/pc/pending", headers=PC).json() == []
+    receiver.journal.close()
+
+
+def test_corrupt_files_do_not_change_clipboard(pc_client, tmp_path):
+    client, _ = pc_client
+    client.post("/drop-pc/share", files={"files": ("photo.jpg", b"original")})
+    copies = []
+    receiver = Receiver(receiver_config(tmp_path), tmp_path / "state", TestOpener(client, corrupt=True), clipboard=lambda files: copies.extend(files))
+    assert not receiver.run_once()
+    assert copies == []
+    receiver.journal.close()
+
+
+def test_windows_file_clipboard_payload_supports_unicode_and_multiple_files(tmp_path):
+    paths = [tmp_path / "照片 📷.jpg", tmp_path / "notes.txt"]
+    payload = file_drop_payload(paths)
+    assert struct.unpack("<IiiII", payload[:20]) == (20, 0, 0, 0, 1)
+    names = payload[20:].decode("utf-16-le")
+    assert names.endswith("\0\0")
+    assert names[:-2].split("\0") == [str(path.resolve()) for path in paths]
+    with pytest.raises(ValueError):
+        file_drop_payload([])
+
+
+def test_receipt_only_reports_clipboard_copy_when_it_succeeded(tmp_path):
+    paths = [tmp_path / "photo.jpg"]
+    assert "Ctrl+V" in receipt_text(paths, clipboard_copied=True)[1]
+    assert "Ctrl+V" not in receipt_text(paths, clipboard_copied=False)[1]
 
 
 @pytest.mark.parametrize("value,expected", [("../../vivo.txt", "vivo.txt"), ("C:\\folder\\照片.jpg", "照片.jpg"), ("CON.txt", "_CON.txt"), ("..", "file"), ("a?.txt. ", "a_.txt")])
